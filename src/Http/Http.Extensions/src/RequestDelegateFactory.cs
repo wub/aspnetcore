@@ -113,7 +113,7 @@ public static partial class RequestDelegateFactory
             throw new ArgumentNullException(nameof(handler));
         }
 
-        var targetExpression = handler.Target switch
+        var targetConvertMethod = handler.Target switch
         {
             object => Expression.Convert(TargetExpr, handler.Target.GetType()),
             null => null,
@@ -121,7 +121,7 @@ public static partial class RequestDelegateFactory
 
         var factoryContext = CreateFactoryContext(options);
 
-        var targetableRequestDelegate = CreateTargetableRequestDelegate(handler.Method, targetExpression, factoryContext);
+        var targetableRequestDelegate = CreateTargetableRequestDelegate(handler.Method, targetConvertMethod, factoryContext, handler.Target);
 
         return new RequestDelegateResult(httpContext => targetableRequestDelegate(handler.Target, httpContext), factoryContext.Metadata);
     }
@@ -153,7 +153,7 @@ public static partial class RequestDelegateFactory
         {
             if (methodInfo.IsStatic)
             {
-                var untargetableRequestDelegate = CreateTargetableRequestDelegate(methodInfo, targetExpression: null, factoryContext);
+                var untargetableRequestDelegate = CreateTargetableRequestDelegate(methodInfo, targetConvertMethod: null, factoryContext);
 
                 return new RequestDelegateResult(httpContext => untargetableRequestDelegate(null, httpContext), factoryContext.Metadata);
             }
@@ -187,7 +187,8 @@ public static partial class RequestDelegateFactory
         return context;
     }
 
-    private static Func<object?, HttpContext, Task> CreateTargetableRequestDelegate(MethodInfo methodInfo, Expression? targetExpression, FactoryContext factoryContext)
+    private static Func<object?, HttpContext, Task> CreateTargetableRequestDelegate(MethodInfo methodInfo, Expression? targetConvertMethod,
+        FactoryContext factoryContext, object? targetInstance = null)
     {
         // Non void return type
 
@@ -211,7 +212,7 @@ public static partial class RequestDelegateFactory
         // CreateArguments will add metadata inferred from parameter details
         var arguments = CreateArguments(methodInfo.GetParameters(), factoryContext);
         var returnType = methodInfo.ReturnType;
-        factoryContext.MethodCall = CreateMethodCall(methodInfo, targetExpression, arguments);
+        factoryContext.MethodCall = CreateMethodCall(methodInfo, targetConvertMethod, arguments);
 
         // Add metadata provided by the delegate return type and parameter types next, this will be more specific than inferred metadata from above
         AddTypeProvidedMetadata(methodInfo, factoryContext.Metadata, factoryContext.ServiceProvider);
@@ -223,11 +224,11 @@ public static partial class RequestDelegateFactory
         // return type associated with the request to allow for the filter invocation pipeline.
         if (factoryContext.Filters is { Count: > 0 })
         {
-            var filterPipeline = CreateFilterPipeline(methodInfo, targetExpression, factoryContext);
+            var filterPipeline = CreateFilterPipeline(methodInfo, targetConvertMethod, factoryContext, targetInstance);
             Expression<Func<RouteHandlerInvocationContext, ValueTask<object?>>> invokePipeline = (context) => filterPipeline(context);
             returnType = typeof(ValueTask<object?>);
             // var filterContext = new RouteHandlerInvocationContext(httpContext, new[] { (object)name_local, (object)int_local });
-            // invokePipeline.Invoke(filterContext);
+            // invokePipeline.Invoke(target, filterContext);
             factoryContext.MethodCall = Expression.Block(
                 new[] { InvokedFilterContextExpr },
                 Expression.Assign(
@@ -250,24 +251,38 @@ public static partial class RequestDelegateFactory
         return HandleRequestBodyAndCompileRequestDelegate(responseWritingMethodCall, factoryContext);
     }
 
-    private static RouteHandlerFilterDelegate CreateFilterPipeline(MethodInfo methodInfo, Expression? target, FactoryContext factoryContext)
+    private static RouteHandlerFilterDelegate CreateFilterPipeline(MethodInfo methodInfo, Expression? targetConvertMethod,
+        FactoryContext factoryContext, object? targetInstance)
     {
         Debug.Assert(factoryContext.Filters is not null);
-        // httpContext.Response.StatusCode >= 400
-        // ? Task.CompletedTask
-        // : handler((string)context.Parameters[0], (int)context.Parameters[1])
+        // if (httpContext.Response.StatusCode >= 400)
+        // {
+        //     return Task.CompletedTask;
+        // }
+        // if (inline-delegate) // code generation time check
+        // {
+        //     var target;
+        //     target = targetInstance;
+        //     return Convert(target, compilerType).handler((string)context.Parameters[0], (int)context.Parameters[1]);
+        // }
+        // else
+        // {
+        //     return handler((string)context.Parameters[0], (int)context.Parameters[1]);
+        // }
         var filteredInvocation = Expression.Lambda<RouteHandlerFilterDelegate>(
             Expression.Condition(
                 Expression.GreaterThanOrEqual(FilterContextHttpContextStatusCodeExpr, Expression.Constant(400)),
                 CompletedValueTaskExpr,
                 Expression.Block(
                     new[] { TargetExpr },
+                    Expression.Assign(TargetExpr, Expression.Constant(targetInstance)),
                     Expression.Call(WrapObjectAsValueTaskMethod,
-                        target is null
+                        targetConvertMethod is null
                             ? Expression.Call(methodInfo, factoryContext.ContextArgAccess)
-                            : Expression.Call(target, methodInfo, factoryContext.ContextArgAccess))
+                            : Expression.Call(targetConvertMethod, methodInfo, factoryContext.ContextArgAccess))
                 )),
             FilterContextExpr).Compile();
+
         var routeHandlerContext = new RouteHandlerContext(
             methodInfo,
             new EndpointMetadataCollection(factoryContext.Metadata));
