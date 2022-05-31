@@ -19,7 +19,7 @@ class HubConnectionReturnResultTest {
     private static final String RECORD_SEPARATOR = "\u001e";
     
     @Test
-    public void returnFromOnHandler()  {
+    public void returnFromOnHandlerNoParams() {
         MockTransport mockTransport = new MockTransport();
         HubConnection hubConnection = TestUtils.createHubConnection("http://example.com", mockTransport);
         AtomicBoolean handlerCalled = new AtomicBoolean();
@@ -40,7 +40,7 @@ class HubConnectionReturnResultTest {
     }
 
     @Test
-    public void missingOnHandlerWithRequestedResult()  {
+    public void missingReturningOnHandlerWithRequestedResult() {
         MockTransport mockTransport = new MockTransport();
         HubConnection hubConnection = TestUtils.createHubConnection("http://example.com", mockTransport);
         AtomicBoolean handlerCalled = new AtomicBoolean();
@@ -60,7 +60,7 @@ class HubConnectionReturnResultTest {
     }
 
     @Test
-    public void missingReturningOnHandlerWithRequestedResult()  {
+    public void missingOnHandlerWithRequestedResult() {
         MockTransport mockTransport = new MockTransport();
         HubConnection hubConnection = TestUtils.createHubConnection("http://example.com", mockTransport);
 
@@ -74,7 +74,7 @@ class HubConnectionReturnResultTest {
     }
 
     @Test
-    public void throwFromReturningOnHandlerWithRequestedResult()  {
+    public void throwFromReturningOnHandlerWithRequestedResult() {
         MockTransport mockTransport = new MockTransport();
         HubConnection hubConnection = TestUtils.createHubConnection("http://example.com", mockTransport);
         AtomicBoolean handlerCalled = new AtomicBoolean();
@@ -96,5 +96,30 @@ class HubConnectionReturnResultTest {
         ByteBuffer message = sendTask.timeout(30, TimeUnit.SECONDS).blockingGet();
         String expected = "{\"type\":3,\"invocationId\":\"1\",\"error\":\"Custom error.\"}" + RECORD_SEPARATOR;
         assertEquals(expected, TestUtils.byteBufferToString(message));
+    }
+
+    @Test
+    public void cannotRegisterMultipleReturnHandlers() {
+        MockTransport mockTransport = new MockTransport();
+        HubConnection hubConnection = TestUtils.createHubConnection("http://example.com", mockTransport);
+
+        hubConnection.on("inc", () -> {
+            return "value";
+        });
+
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> {
+            hubConnection.on("inc", () -> {
+                return "value2";
+            });
+        });
+        assertEquals("'inc' already has a value returning handler. Multiple return values are not supported.", ex.getMessage());
+    }
+
+    @Test
+    public void logsWhenReturningResultButResultNotExpected() {
+        try (TestLogger logger = new TestLogger()) {
+            MockTransport mockTransport = new MockTransport();
+            HubConnection hubConnection = TestUtils.createHubConnection("http://example.com", mockTransport);
+        }
     }
 }
