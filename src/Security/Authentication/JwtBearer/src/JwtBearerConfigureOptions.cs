@@ -54,10 +54,11 @@ internal sealed class JwtBearerConfigureOptions : IConfigureNamedOptions<JwtBear
 
     private static SecurityKey GetIssuerSigningKey(IConfiguration configuration, string? issuer)
     {
-        var jwtKeyMaterialSecret = configuration[$"{issuer}:KeyMaterial"];
+        var jwtKeyMaterialSecret = configuration[$"{issuer}:SigningKey:Value"];
+        int signingKeyLength = int.TryParse(configuration[$"{issuer}:SigningKey:KeyLength"], out signingKeyLength) ? signingKeyLength : 32;
         var jwtKeyMaterial = !string.IsNullOrEmpty(jwtKeyMaterialSecret)
             ? Convert.FromBase64String(jwtKeyMaterialSecret)
-            : RandomNumberGenerator.GetBytes(32);
+            : RandomNumberGenerator.GetBytes(signingKeyLength);
         return new SymmetricSecurityKey(jwtKeyMaterial);
     }
 
