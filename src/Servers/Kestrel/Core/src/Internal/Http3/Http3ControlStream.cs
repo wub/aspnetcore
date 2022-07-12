@@ -231,7 +231,7 @@ internal abstract class Http3ControlStream : IHttp3Stream, IThreadPoolWorkItem
 
                 if (result.IsCompleted)
                 {
-                    if (_connectionClosed)
+                    if (!_connectionClosed)
                     {
                         // https://quicwg.org/base-drafts/draft-ietf-quic-http.html#section-6.2.1-2
                         throw new Http3ConnectionErrorException(CoreStrings.Http3ErrorControlStreamClientClosedInbound, Http3ErrorCode.ClosedCriticalStream);
