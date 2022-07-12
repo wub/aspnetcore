@@ -45,6 +45,7 @@ internal abstract partial class Http3Stream : HttpProtocol, IHttp3Stream, IHttpS
     private IProtocolErrorCodeFeature _errorCodeFeature = default!;
     private IStreamIdFeature _streamIdFeature = default!;
     private IStreamAbortFeature _streamAbortFeature = default!;
+    private IConnectionCompleteFeature _completeFeature = default!;
     private int _isClosed;
     private readonly Http3RawFrame _incomingFrame = new Http3RawFrame();
     protected RequestHeaderParsingState _requestHeaderParsingState;
@@ -91,6 +92,7 @@ internal abstract partial class Http3Stream : HttpProtocol, IHttp3Stream, IHttpS
         _errorCodeFeature = _context.ConnectionFeatures.GetRequiredFeature<IProtocolErrorCodeFeature>();
         _streamIdFeature = _context.ConnectionFeatures.GetRequiredFeature<IStreamIdFeature>();
         _streamAbortFeature = _context.ConnectionFeatures.GetRequiredFeature<IStreamAbortFeature>();
+        _completeFeature = _context.ConnectionFeatures.GetRequiredFeature<IConnectionCompleteFeature>();
 
         _appCompletedTaskSource.Reset();
         _isClosed = 0;
@@ -660,14 +662,7 @@ internal abstract partial class Http3Stream : HttpProtocol, IHttp3Stream, IHttpS
                 // Only subscribe to this event after the stream's read-side is complete to
                 // avoid interactions between reading that is in-progress and an abort.
                 // This means while reading, read-side abort will handle getting abort notifications.
-                //
-                // We don't need to hang on to the CancellationTokenRegistration from register.
-                // The CTS is cleaned up in StreamContext.DisposeAsync.
-                //
-                // TODO: Consider a better way to provide this notification. For perf we want to
-                // make the ConnectionClosed CTS pay-for-play, and change this event to use
-                // something that is more lightweight than a CTS.
-                _context.StreamContext.ConnectionClosed.Register(static s =>
+                _completeFeature.OnCompleted(static s =>
                 {
                     var stream = (Http3Stream)s!;
 
@@ -680,6 +675,7 @@ internal abstract partial class Http3Stream : HttpProtocol, IHttp3Stream, IHttpS
                             stream.AbortCore(new IOException(CoreStrings.HttpStreamResetByClient), (Http3ErrorCode)errorCode);
                         }
                     }
+                    return Task.CompletedTask;
                 }, this);
 
                 // Make sure application func is completed before completing writer.

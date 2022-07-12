@@ -27,7 +27,7 @@ internal partial class QuicStreamContext : TransportConnection, IPooledStream, I
     private readonly CompletionPipeReader _transportPipeReader;
     private readonly CompletionPipeWriter _transportPipeWriter;
     private readonly ILogger _log;
-    private CancellationTokenSource _streamClosedTokenSource = default!;
+    private CancellationTokenSource? _streamClosedTokenSource;
     private string? _connectionId;
     private const int MinAllocBufferSize = 4096;
     private volatile Exception? _shutdownReadReason;
@@ -37,7 +37,7 @@ internal partial class QuicStreamContext : TransportConnection, IPooledStream, I
     private bool _streamClosed;
     private bool _serverAborted;
     private bool _clientAbort;
-    private TaskCompletionSource _waitForConnectionClosedTcs = default!;
+    private TaskCompletionSource? _waitForConnectionClosedTcs;
     private readonly object _shutdownLock = new object();
 
     public QuicStreamContext(QuicConnectionContext connection, QuicTransportContext context)
@@ -80,12 +80,7 @@ internal partial class QuicStreamContext : TransportConnection, IPooledStream, I
 
         _stream = stream;
 
-        if (!(_streamClosedTokenSource?.TryReset() ?? false))
-        {
-            _streamClosedTokenSource = new CancellationTokenSource();
-        }
-
-        ConnectionClosed = _streamClosedTokenSource.Token;
+        _streamClosedTokenSource = null;
 
         InitializeFeatures();
 
@@ -107,8 +102,7 @@ internal partial class QuicStreamContext : TransportConnection, IPooledStream, I
         _streamClosed = false;
         _serverAborted = false;
         _clientAbort = false;
-        // TODO - resetable TCS
-        _waitForConnectionClosedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _waitForConnectionClosedTcs = null;
 
         // Only reset pipes if the stream has been reused.
         if (CanReuse)
@@ -118,6 +112,20 @@ internal partial class QuicStreamContext : TransportConnection, IPooledStream, I
         }
 
         CanReuse = false;
+    }
+
+    public override CancellationToken ConnectionClosed
+    {
+        get
+        {
+            // Allocate CTS only if requested.
+            if (_streamClosedTokenSource == null)
+            {
+                _streamClosedTokenSource = new CancellationTokenSource();
+            }
+            return _streamClosedTokenSource.Token;
+        }
+        set => throw new NotSupportedException();
     }
 
     public override string ConnectionId
@@ -319,20 +327,57 @@ internal partial class QuicStreamContext : TransportConnection, IPooledStream, I
 
         _streamClosed = true;
 
-        ThreadPool.UnsafeQueueUserWorkItem(state =>
+        var onCompleted = _onCompleted;
+
+        Task task = Task.CompletedTask;
+        if (onCompleted != null && onCompleted.Count > 0)
         {
-            state.CancelConnectionClosedToken();
+            task = CompleteAsyncMayAwait(onCompleted);
+        }
 
-            state._waitForConnectionClosedTcs.TrySetResult();
-        },
-        this,
-        preferLocal: false);
+        if (_streamClosedTokenSource != null)
+        {
+            if (!task.IsCompletedSuccessfully)
+            {
+                return FireStreamClosedAsyncCore(task, this);
+            }
+            else
+            {
+                return CancelConnectionClosedTokenAsync(this);
+            }
+        }
 
-        return _waitForConnectionClosedTcs.Task;
+        return task;
+
+        static async Task FireStreamClosedAsyncCore(Task task, QuicStreamContext context)
+        {
+            await task;
+            await CancelConnectionClosedTokenAsync(context);
+        }
+
+        static Task CancelConnectionClosedTokenAsync(QuicStreamContext context)
+        {
+            Debug.Assert(context._streamClosedTokenSource != null);
+
+            context._waitForConnectionClosedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            ThreadPool.UnsafeQueueUserWorkItem(state =>
+            {
+                state.CancelConnectionClosedToken();
+
+                state._waitForConnectionClosedTcs!.TrySetResult();
+            },
+            context,
+            preferLocal: false);
+
+            return context._waitForConnectionClosedTcs.Task;
+        }
     }
 
     private void CancelConnectionClosedToken()
     {
+        Debug.Assert(_streamClosedTokenSource != null);
+
         try
         {
             _streamClosedTokenSource.Cancel();

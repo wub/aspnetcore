@@ -1018,7 +1018,7 @@ internal class TestMultiplexedConnectionContext : MultiplexedConnectionContext, 
     }
 }
 
-internal class TestStreamContext : ConnectionContext, IStreamDirectionFeature, IStreamIdFeature, IProtocolErrorCodeFeature, IPersistentStateFeature, IStreamAbortFeature, IDisposable
+internal class TestStreamContext : ConnectionContext, IStreamDirectionFeature, IStreamIdFeature, IProtocolErrorCodeFeature, IPersistentStateFeature, IStreamAbortFeature, IDisposable, IConnectionCompleteFeature
 {
     private readonly Http3InMemory _testBase;
 
@@ -1037,6 +1037,7 @@ internal class TestStreamContext : ConnectionContext, IStreamDirectionFeature, I
     private TaskCompletionSource _disposingTcs;
     private TaskCompletionSource _disposedTcs;
     internal long? _error;
+    private Stack<KeyValuePair<Func<object, Task>, object>> _onCompleted;
 
     public TestStreamContext(bool canRead, bool canWrite, Http3InMemory testBase)
     {
@@ -1084,6 +1085,7 @@ internal class TestStreamContext : ConnectionContext, IStreamDirectionFeature, I
         Features.Set<IStreamAbortFeature>(this);
         Features.Set<IProtocolErrorCodeFeature>(this);
         Features.Set<IPersistentStateFeature>(this);
+        Features.Set<IConnectionCompleteFeature>(this);
 
         StreamId = streamId;
         _testBase.Logger.LogInformation($"Initializing stream {streamId}");
@@ -1204,5 +1206,59 @@ internal class TestStreamContext : ConnectionContext, IStreamDirectionFeature, I
     void IStreamAbortFeature.AbortWrite(long errorCode, ConnectionAbortedException abortReason)
     {
         AbortWriteException = abortReason;
+    }
+
+    public void OnCompleted(Func<object, Task> callback, object state)
+    {
+        if (_onCompleted == null)
+        {
+            _onCompleted = new Stack<KeyValuePair<Func<object, Task>, object>>();
+        }
+        _onCompleted.Push(new KeyValuePair<Func<object, Task>, object>(callback, state));
+    }
+
+    private Task CompleteAsyncMayAwait(Stack<KeyValuePair<Func<object, Task>, object>> onCompleted)
+    {
+        while (onCompleted.TryPop(out var entry))
+        {
+            try
+            {
+                var task = entry.Key.Invoke(entry.Value);
+                if (!task.IsCompletedSuccessfully)
+                {
+                    return CompleteAsyncAwaited(task, onCompleted);
+                }
+            }
+            catch (Exception ex)
+            {
+                _testBase.Logger.LogError(ex, "An error occurred running an IConnectionCompleteFeature.OnCompleted callback.");
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task CompleteAsyncAwaited(Task currentTask, Stack<KeyValuePair<Func<object, Task>, object>> onCompleted)
+    {
+        try
+        {
+            await currentTask;
+        }
+        catch (Exception ex)
+        {
+            _testBase.Logger.LogError(ex, "An error occurred running an IConnectionCompleteFeature.OnCompleted callback.");
+        }
+
+        while (onCompleted.TryPop(out var entry))
+        {
+            try
+            {
+                await entry.Key.Invoke(entry.Value);
+            }
+            catch (Exception ex)
+            {
+                _testBase.Logger.LogError(ex, "An error occurred running an IConnectionCompleteFeature.OnCompleted callback.");
+            }
+        }
     }
 }

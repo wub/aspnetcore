@@ -67,7 +67,7 @@ public class Http3HttpProtocolFeatureCollectionTests
         }
     }
 
-    private class TestConnectionFeatures : IProtocolErrorCodeFeature, IStreamIdFeature, IStreamAbortFeature
+    private class TestConnectionFeatures : IProtocolErrorCodeFeature, IStreamIdFeature, IStreamAbortFeature, IConnectionCompleteFeature
     {
         public TestConnectionFeatures()
         {
@@ -75,6 +75,7 @@ public class Http3HttpProtocolFeatureCollectionTests
             featureCollection.Set<IProtocolErrorCodeFeature>(this);
             featureCollection.Set<IStreamIdFeature>(this);
             featureCollection.Set<IStreamAbortFeature>(this);
+            featureCollection.Set<IConnectionCompleteFeature>(this);
 
             FeatureCollection = featureCollection;
         }
@@ -82,6 +83,11 @@ public class Http3HttpProtocolFeatureCollectionTests
         public IFeatureCollection FeatureCollection { get; }
         long IProtocolErrorCodeFeature.Error { get; set; }
         long IStreamIdFeature.StreamId { get; }
+
+        public void OnCompleted(Func<object, Task> callback, object state)
+        {
+            throw new NotImplementedException();
+        }
 
         void IStreamAbortFeature.AbortRead(long errorCode, ConnectionAbortedException abortReason)
         {

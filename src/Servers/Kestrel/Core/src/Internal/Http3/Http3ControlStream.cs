@@ -23,11 +23,13 @@ internal abstract class Http3ControlStream : IHttp3Stream, IThreadPoolWorkItem
     private readonly Http3StreamContext _context;
     private readonly Http3PeerSettings _serverPeerSettings;
     private readonly IStreamIdFeature _streamIdFeature;
+    private readonly IConnectionCompleteFeature _completeFeature;
     private readonly IProtocolErrorCodeFeature _errorCodeFeature;
     private readonly Http3RawFrame _incomingFrame = new Http3RawFrame();
     private volatile int _isClosed;
     private int _gracefulCloseInitiator;
     private long _headerType;
+    private bool _connectionClosed;
 
     private bool _haveReceivedSettingsFrame;
 
@@ -39,6 +41,7 @@ internal abstract class Http3ControlStream : IHttp3Stream, IThreadPoolWorkItem
         _context = context;
         _serverPeerSettings = context.ServerPeerSettings;
         _streamIdFeature = context.ConnectionFeatures.GetRequiredFeature<IStreamIdFeature>();
+        _completeFeature = context.ConnectionFeatures.GetRequiredFeature<IConnectionCompleteFeature>();
         _errorCodeFeature = context.ConnectionFeatures.GetRequiredFeature<IProtocolErrorCodeFeature>();
         _headerType = -1;
 
@@ -228,7 +231,7 @@ internal abstract class Http3ControlStream : IHttp3Stream, IThreadPoolWorkItem
 
                 if (result.IsCompleted)
                 {
-                    if (!_context.StreamContext.ConnectionClosed.IsCancellationRequested)
+                    if (_connectionClosed)
                     {
                         // https://quicwg.org/base-drafts/draft-ietf-quic-http.html#section-6.2.1-2
                         throw new Http3ConnectionErrorException(CoreStrings.Http3ErrorControlStreamClientClosedInbound, Http3ErrorCode.ClosedCriticalStream);
@@ -289,7 +292,12 @@ internal abstract class Http3ControlStream : IHttp3Stream, IThreadPoolWorkItem
         }
 
         _haveReceivedSettingsFrame = true;
-        using var closedRegistration = _context.StreamContext.ConnectionClosed.Register(state => ((Http3ControlStream)state!).OnStreamClosed(), this);
+        _completeFeature.OnCompleted(state =>
+        {
+            ((Http3ControlStream)state!).OnStreamClosed();
+            _connectionClosed = true;
+            return Task.CompletedTask;
+        }, this);
 
         while (true)
         {
