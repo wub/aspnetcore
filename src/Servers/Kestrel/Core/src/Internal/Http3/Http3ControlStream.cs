@@ -3,7 +3,6 @@
 
 using System.Buffers;
 using System.Globalization;
-using System.IO;
 using System.IO.Pipelines;
 using System.Net.Http;
 using Microsoft.AspNetCore.Connections;

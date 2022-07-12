@@ -611,6 +611,6 @@ internal partial class QuicStreamContext : TransportConnection, IPooledStream, I
     // Called when the stream is no longer reused.
     public void DisposeCore()
     {
-        _streamClosedTokenSource.Dispose();
+        _streamClosedTokenSource?.Dispose();
     }
 }
