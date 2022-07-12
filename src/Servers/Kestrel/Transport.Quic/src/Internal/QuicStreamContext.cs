@@ -350,7 +350,7 @@ internal partial class QuicStreamContext : TransportConnection, IPooledStream, I
         Exception? shutdownReason = null;
         Exception? unexpectedError = null;
 
-        var sendCompletedTask = WaitForWritesCompleted();
+        _ = WaitForWritesCompleted();
 
         try
         {
@@ -447,7 +447,6 @@ internal partial class QuicStreamContext : TransportConnection, IPooledStream, I
         finally
         {
             ShutdownWrite(_shutdownWriteReason ?? _shutdownReason ?? shutdownReason);
-            await sendCompletedTask;
 
             // Complete the output after completing stream sends
             Output.Complete(unexpectedError);
