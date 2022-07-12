@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Globalization;
+using System.IO;
 using System.IO.Pipelines;
 using System.Net.Http;
 using Microsoft.AspNetCore.Connections;
@@ -60,6 +61,7 @@ internal abstract class Http3ControlStream : IHttp3Stream, IThreadPoolWorkItem
     private void OnStreamClosed()
     {
         Abort(new ConnectionAbortedException("HTTP_CLOSED_CRITICAL_STREAM"), Http3ErrorCode.InternalError);
+        _connectionClosed = true;
     }
 
     public PipeReader Input => _context.Transport.Input;
@@ -292,10 +294,10 @@ internal abstract class Http3ControlStream : IHttp3Stream, IThreadPoolWorkItem
         }
 
         _haveReceivedSettingsFrame = true;
-        _completeFeature.OnCompleted(state =>
+        _completeFeature.OnCompleted(static state =>
         {
-            ((Http3ControlStream)state!).OnStreamClosed();
-            _connectionClosed = true;
+            var stream = (Http3ControlStream)state!;
+            stream.OnStreamClosed();
             return Task.CompletedTask;
         }, this);
 
