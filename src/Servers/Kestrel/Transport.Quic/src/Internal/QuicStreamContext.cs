@@ -329,7 +329,7 @@ internal partial class QuicStreamContext : TransportConnection, IPooledStream, I
 
         var onCompleted = _onCompleted;
 
-        Task task = Task.CompletedTask;
+        var task = Task.CompletedTask;
         if (onCompleted != null && onCompleted.Count > 0)
         {
             task = CompleteAsyncMayAwait(onCompleted);
